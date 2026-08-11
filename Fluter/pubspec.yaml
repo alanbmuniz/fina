@@ -1,0 +1,79 @@
+name: fina
+description: FINA — Assistente Financeiro Pessoal com IA
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP e API
+  dio: ^5.7.0
+  retrofit: ^4.4.1
+
+  # Estado
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Navegação
+  go_router: ^14.3.0
+
+  # UI
+  google_fonts: ^6.2.1
+  flutter_svg: ^2.0.10
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+  fl_chart: ^0.69.0              # gráficos financeiros
+  lottie: ^3.1.2                 # animações
+
+  # Storage seguro (dados sensíveis)
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.3
+
+  # Áudio / Voz
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.1.0
+
+  # Open Finance
+  webview_flutter: ^4.9.0        # widget Pluggy
+
+  # Notificações
+  flutter_local_notifications: ^17.2.3
+
+  # Formatação BR
+  intl: ^0.19.0
+
+  # Misc
+  uuid: ^4.5.1
+  equatable: ^2.0.5
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.4.13
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  retrofit_generator: ^9.1.4
+  riverpod_generator: ^2.4.3
+  flutter_lints: ^4.0.0
+  mockito: ^5.4.4
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/animations/
+    - assets/fonts/
+  fonts:
+    - family: Sora
+      fonts:
+        - asset: assets/fonts/Sora-Regular.ttf
+        - asset: assets/fonts/Sora-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Sora-Bold.ttf
+          weight: 700
