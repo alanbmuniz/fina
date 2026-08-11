@@ -1,0 +1,179 @@
+name: FINA CI/CD — Deploy Automático
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # 1. Testes Backend
+  # ──────────────────────────────────────────────────────────────
+  test-backend:
+    name: Testes Python
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER:     fina_user
+          POSTGRES_PASSWORD: fina_pass
+          POSTGRES_DB:       fina_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Instalar dependências
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Executar testes
+        env:
+          DATABASE_URL: postgresql+asyncpg://fina_user:fina_pass@localhost:5432/fina_test
+          SECRET_KEY:   test_secret_key_only_for_ci
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cd backend
+          pytest tests/ -v --asyncio-mode=auto
+
+  # ──────────────────────────────────────────────────────────────
+  # 2. Deploy Backend → Railway
+  # ──────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: Deploy API (Railway)
+    needs: test-backend
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy para Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          cd backend
+          railway up --service fina-api
+
+  # ──────────────────────────────────────────────────────────────
+  # 3. Build Flutter Android (APK + AAB para Play Store)
+  # ──────────────────────────────────────────────────────────────
+  build-android:
+    name: Build Android
+    needs: deploy-backend
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with: { flutter-version: "3.24.0" }
+
+      - name: Instalar dependências Flutter
+        run: |
+          cd flutter_app
+          flutter pub get
+
+      - name: Decodificar keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > flutter_app/android/app/fina-release.jks
+
+      - name: Build AAB (Google Play)
+        env:
+          KEY_ALIAS:    ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          cd flutter_app
+          flutter build appbundle --release \
+            --dart-define=API_URL=https://api.fina.com.br
+
+      - name: Upload para Google Play (Internal Track)
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+          packageName: br.com.fina.app
+          releaseFiles: flutter_app/build/app/outputs/bundle/release/app-release.aab
+          track: internal
+
+  # ──────────────────────────────────────────────────────────────
+  # 4. Build Flutter iOS (IPA para App Store)
+  # ──────────────────────────────────────────────────────────────
+  build-ios:
+    name: Build iOS
+    needs: deploy-backend
+    runs-on: macos-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with: { flutter-version: "3.24.0" }
+
+      - name: Instalar dependências
+        run: |
+          cd flutter_app
+          flutter pub get
+          cd ios && pod install
+
+      - name: Importar certificados Apple
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          # Criar keychain temporário
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+
+          # Importar certificado
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 -d > certificate.p12
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+
+          # Provisioning profile
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$APPLE_PROVISIONING_PROFILE" | base64 -d \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/fina.mobileprovision
+
+      - name: Build IPA
+        run: |
+          cd flutter_app
+          flutter build ipa --release \
+            --dart-define=API_URL=https://api.fina.com.br \
+            --export-options-plist=ios/ExportOptions.plist
+
+      - name: Upload para TestFlight
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.ASC_API_KEY }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          xcrun altool --upload-app \
+            --file flutter_app/build/ios/ipa/*.ipa \
+            --type ios \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
